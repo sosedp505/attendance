@@ -141,7 +141,11 @@ function toast(msg){document.querySelectorAll('.toast').forEach(function(x){x.re
 function hrs(h){h=+h||0;return (Math.round(h*100)/100).toFixed(h%1===0?0:(Math.round(h*10)===h*10?1:2));}
 function mins2h(m){m=+m||0;return hrs(m/60);}
 function todayStr(){return (ST.boot&&ST.boot.today)||new Date().toISOString().substr(0,10);}
-function ymNow(){return todayStr().substr(0,7);}
+function ymNow(){return (ST.boot&&ST.boot.periodYm)||todayStr().substr(0,7);}
+function ymCompany(){return (ST.boot&&ST.boot.defaultPeriodYm)||ymNow();}
+function fmtHM(m){return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');}
+function shortD(d){var p=d.split('-');return (+p[2])+' '+MON[+p[1]-1];}
+function periodText(p){return p?shortD(p.from)+' – '+shortD(p.to):'';}
 var DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 var MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function niceDate(d){if(!d)return '';var p=d.split('-');var dt=new Date(Date.UTC(+p[0],+p[1]-1,+p[2]));return DOW[dt.getUTCDay()]+' '+(+p[2])+' '+MON[+p[1]-1];}
@@ -241,7 +245,6 @@ function renderLogin(msg,after){
   var go=document.getElementById('lgo');
   function submit(){var id=document.getElementById('lid').value.trim(),pin=document.getElementById('lpin').value.trim();if(!id||!pin){toast('Enter Staff ID and PIN');return;}
     busy(go,true);api('apiLogin',id,pin,deviceId()).then(function(r){TOKEN=r.token;store('sos_token',TOKEN);ST.me=r.me;
-      if(r.me.registeredNow)toast('This phone is now registered to you');
       if(r.me.mustChangePin)renderChangePin(true,after);else (after||start)();}).catch(function(e){busy(go,false);renderLogin(e.message,after);});}
   go.onclick=submit;document.getElementById('lpin').onkeydown=function(e){if(e.key==='Enter')submit();};
 }
@@ -274,6 +277,7 @@ function scanFlow(){
       var cls=r.type==='IN'?'in':'out';
       var head=r.duplicate?'Already recorded':(r.type==='IN'?'Checked IN':'Checked OUT');
       shell('<div class="result '+cls+'"><div>'+esc(r.name)+'</div><div class="big">'+head+'</div><div class="time">'+esc(r.time)+'</div><div>'+esc(r.outletName)+'</div></div>'+
+        (r.registeredNow?'<div class="okmsg">This phone is now registered as your attendance phone.</div>':'')+
         (r.duplicate?'<div class="hint">You scanned again within a couple of minutes, so nothing new was recorded.</div>':'')+
         (r.otherOutlet&&!r.duplicate?'<div class="hint">Note: this is not your home outlet. It has been recorded.</div>':'')+
         (r.missedOutlet&&!r.duplicate?'<div class="err">You did not scan OUT when leaving <b>'+esc(r.missedOutlet)+'</b>. Your time there will not count until your manager adds the time you left. Remember to scan OUT before leaving each outlet.</div>':'')+
@@ -308,8 +312,8 @@ function isAdmin(){return ST.me&&ST.me.role==='Admin';}
 function shell(){
   var roleLabel={Admin:'Admin',OutletManager:'Outlet Manager',Accountant:'Accountant',Staff:''}[ST.me.role]||'';
   var tabs=[];
-  if(ST.me.role!=='Accountant'&&ST.me.staffId!=='ADMIN')tabs=[['home','⌂','Home'],['history','☰','History'],['leave','✈','Leave']];
-  if(isViewer()||ST.me.canRoster)tabs.push(['manage','⚙',ST.me.role==='Accountant'?'Reports':(isViewer()?'Manage':'Roster')]);
+  if(ST.me.role!=='Accountant'&&ST.me.staffId!=='ADMIN')tabs=[['home','⌂','Home'],['history','☰','My month'],['leave','✈','Leave']];
+  if(isViewer()||ST.me.canRoster)tabs.push(['manage','⚙',ST.me.role==='Accountant'?'Reports':(isViewer()?'Manage':'Team')]);
   tabs.push(['me','☺','Me']);
   if(!tabs.some(function(t){return t[0]===ST.tab;}))ST.tab=tabs[0][0];
   $app.innerHTML='<header class="top"><div class="in"><span class="logo">SOS</span><div><div class="title">'+esc(ST.me.name)+'</div><div class="sub">'+esc(ST.me.staffId)+' · '+esc(outletName(ST.me.outlet))+(roleLabel?' · '+roleLabel:'')+'</div></div><div class="sp"></div></div></header>'+
@@ -331,20 +335,29 @@ function viewHome(v){
       '<div class="big">'+(inNow?'You are checked IN':(last?'You are checked OUT':'Not checked in yet'))+'</div>'+
       (last?'<div class="small" style="opacity:.85">Last scan: '+esc(last.type)+' at '+esc(last.time)+' · '+esc(outletName(last.outlet))+'</div>':'')+
       (t&&t.shift?'<div class="small" style="opacity:.85;margin-top:4px">Today: '+esc(t.shiftName)+(t.shift!=='OFF'?'':'')+'</div>':'')+'</div>'+
-      '<div class="hint" style="margin-top:12px">To check in or out, open your <b>phone camera</b> and scan the QR code on the outlet screen.</div>'+
-      (ST.me.deviceOk?'':'<div class="err">This phone is not your registered phone, so you cannot check in with it. Ask your manager to reset your phone if you changed phones.</div>')+
-      '<h2>'+esc(niceYm(r.ym))+'</h2><div class="grid g3">'+
-      stat(hrs(s.requiredHrs)+'h','Required this month')+stat(hrs(s.creditHrs)+'h','Credited so far')+stat(hrs(s.remainingHrs)+'h','Remaining')+
-      stat(hrs(s.otNormalHrs+s.otPHHrs)+'h','OT approved')+stat(s.lateCount,'Late')+stat(s.absent,'Absent')+'</div>'+
-      (s.otPendingHrs?'<p class="small muted">'+hrs(s.otPendingHrs)+'h OT is waiting for approval.</p>':'')+
-      (t&&t.punches.length?'<h3>Today\'s scans</h3><div class="card">'+punchesHtml(t.punches)+'<div class="small muted" style="margin-top:6px">Worked so far: '+mins2h(t.workedMin)+'h</div></div>':'')+
-      '<h3>My roster</h3><div class="card" style="padding:6px 16px">'+r.roster.map(function(d){
+      '<p class="small muted" style="margin:10px 2px 0">Scan the outlet QR with your phone camera to check in or out.</p>'+
+      (ST.me.deviceOk||!/Mobi|Android|iPhone/i.test(navigator.userAgent)?'':'<div class="err">This phone is not your registered attendance phone, so you cannot check in with it. Ask your manager to reset your phone if you changed phones.</div>')+
+      (r.signoff&&r.signoff.pendingYm?'<div class="card" style="border-color:var(--accent);background:var(--accent-soft);margin-top:14px"><b>Please confirm your '+esc(niceYm(r.signoff.pendingYm))+' attendance.</b><div style="margin-top:10px"><button class="btn primary" id="goConfirm">Check &amp; confirm</button></div></div>':'')+
+      '<h2 style="margin-bottom:2px">Payroll month: '+esc(niceYm(r.ym))+'</h2><div class="small muted" style="margin-bottom:10px">'+esc(periodText(r.period))+'</div><div class="grid g3">'+
+      monthStats(r)+'</div><p class="small"><a href="#" id="seeMonth">See full month ›</a></p>'+
+      (t&&t.punches.length?'<h3>Today\'s scans</h3><div class="card">'+punchesHtml(t.punches)+'</div>':'')+
+      '<h3>Next 7 days</h3><div class="card" style="padding:6px 16px">'+r.roster.filter(function(d){return d.date>=todayStr();}).slice(0,7).map(function(d){
         var isT=d.date===todayStr();
         return '<div class="row daycard"><div style="width:96px" class="'+(isT?'':'muted')+'"><b>'+esc(niceDate(d.date))+'</b></div><div class="grow">'+
           (d.holiday?'<span class="chip acc">'+esc(d.holiday)+'</span> ':'')+(d.shift?(d.shift==='OFF'?'<span class="chip">Rest day</span>':'<b>'+esc(d.shiftName)+'</b> <span class="muted small">'+esc(shiftTimes(d.shift))+'</span>'):'<span class="muted small">Not set</span>')+
           (d.outlet&&d.outlet!==ST.me.outlet?' <span class="chip info">'+esc(outletName(d.outlet))+'</span>':'')+'</div></div>';}).join('')+'</div>';
     v.innerHTML=html;
+    var gc=document.getElementById('goConfirm');if(gc)gc.onclick=function(){ST.histYm=r.signoff.pendingYm;ST.tab='history';document.querySelectorAll('nav.bottom button').forEach(function(x){x.classList.toggle('on',x.dataset.t==='history');});route();};
+    var sm=document.getElementById('seeMonth');if(sm)sm.onclick=function(e){e.preventDefault();ST.tab='history';document.querySelectorAll('nav.bottom button').forEach(function(x){x.classList.toggle('on',x.dataset.t==='history');});route();};
   }).catch(function(e){v.innerHTML=errBox(e);});
+}
+function monthStats(r){
+  var past=r.days.filter(function(d){return d.date<=todayStr();});
+  var late=past.filter(function(d){return d.late;}).length, eo=past.filter(function(d){return d.earlyOutMin;}).length, ab=past.filter(function(d){return d.absent;}).length;
+  var lv=past.filter(function(d){return d.leave;}).reduce(function(a,d){return a+(d.leave.half?0.5:1);},0);
+  var worked=past.filter(function(d){return d.punches.length;}).length;
+  function rs(v,l,red){return '<div class="stat"><div class="v" style="'+(red&&v?'color:var(--bad)':'')+'">'+v+'</div><div class="l">'+l+'</div></div>';}
+  return rs(worked,'Days worked')+rs(late,'Late',1)+rs(eo,'Left early',1)+rs(ab,'Absent',1)+rs(lv,'Leave days')+rs(r.days.filter(function(d){return d.date>todayStr()&&d.shift&&d.shift!=='OFF';}).length,'Shifts to go');
 }
 function shiftTimes(code){var s=(ST.boot.shifts||[]).filter(function(x){return x.code===code;})[0];return s?String(s.segments).replace(/,/g,' & '):'';}
 function stat(v,l){return '<div class="stat"><div class="v">'+esc(v)+'</div><div class="l">'+esc(l)+'</div></div>';}
@@ -352,21 +365,117 @@ function stat(v,l){return '<div class="stat"><div class="v">'+esc(v)+'</div><div
 /* ---- Staff: History ---- */
 function viewHistory(v){
   var ym=ST.histYm||ymNow();
-  v.innerHTML='<div class="row" style="margin-top:16px"><button class="btn sm" id="hp">‹</button><h2 style="margin:0" class="grow center">'+esc(niceYm(ym))+'</h2><button class="btn sm" id="hn">›</button></div><div id="hb"></div>';
+  v.innerHTML='<div class="row" style="margin-top:16px"><button class="btn sm" id="hp">‹</button><div class="grow center"><h2 style="margin:0">'+esc(niceYm(ym))+'</h2><div class="small muted" id="hper">Payroll month</div></div><button class="btn sm" id="hn">›</button></div><div id="hb"></div>';
   document.getElementById('hp').onclick=function(){ST.histYm=addMonths(ym,-1);viewHistory(v);};
-  document.getElementById('hn').onclick=function(){if(ym<ymNow()){ST.histYm=addMonths(ym,1);viewHistory(v);}};
+  document.getElementById('hn').onclick=function(){if(ym<addMonths(ymNow(),1)){ST.histYm=addMonths(ym,1);viewHistory(v);}};
   var hb=document.getElementById('hb');loading(hb);
   call('apiMyMonth',TOKEN,ym).then(function(r){
-    var s=r.summary;
-    hb.innerHTML='<div class="grid g4" style="margin-top:12px">'+stat(hrs(s.workedHrs)+'h','Worked')+stat(hrs(s.remainingHrs)+'h','Remaining of '+hrs(s.requiredHrs)+'h')+
-      stat(hrs(s.otNormalHrs+s.otPHHrs)+'h','OT approved')+stat(s.lateCount+' / '+s.absent,'Late / Absent')+'</div>'+
-      '<div class="card" style="padding:4px 16px">'+(r.days.length?r.days.map(function(d){
-        return '<div class="daycard"><div class="row"><b style="width:100px">'+esc(niceDate(d.date))+'</b><div class="grow">'+statusChip(d)+'</div><div class="small muted">'+(d.workedMin?mins2h(d.workedMin)+'h':'')+'</div></div>'+
-        (d.shift&&d.shift!=='OFF'?'<div class="tiny muted">'+esc(d.shiftName)+' '+esc(shiftTimes(d.shift))+'</div>':'')+
-        (d.punches.length?'<div style="margin-top:4px">'+punchesHtml(d.punches)+trailHtml(d)+'</div>':'')+
-        (d.otMin?'<div class="tiny muted">OT: '+mins2h(d.otMin)+'h'+(d.otPending?' (waiting approval)':'')+(d.otTimeOff?' (as time off)':'')+(d.otRejected?' ('+mins2h(d.otRejected)+'h not approved)':'')+'</div>':'')+
-        (d.leave&&d.leave.reason?'<div class="tiny muted">'+esc(d.leave.reason)+'</div>':'')+'</div>';}).join(''):'<div class="loading">No records this month.</div>')+'</div>';
+    var today=todayStr();
+    document.getElementById('hper').textContent='Payroll month · '+periodText(r.period);
+    function actual(d){
+      if(!d.punches.length)return '';
+      return d.punches.map(function(p){return '<span style="white-space:nowrap">'+(p.type==='IN'?'In ':'Out ')+esc(p.time)+(p.source==='Manual'?' ✎':'')+'</span>';}).join(' · ');
+    }
+    function remarks(d){
+      var out=[];
+      if(d.late)out.push('<div style="color:var(--bad);font-weight:600">Late '+fmtGap(d.lateMin)+(d.lateReason?' <span style="font-weight:400">– '+esc(d.lateReason.reason)+'</span>':'')+'</div>');
+      if(d.earlyOutMin)out.push('<div style="color:var(--bad);font-weight:600">Left '+fmtGap(d.earlyOutMin)+' early'+(d.earlyOutReason?' <span style="font-weight:400">– '+esc(d.earlyOutReason.reason)+'</span>':'')+'</div>');
+      if(d.earlyMin)out.push('<div>Came in '+fmtGap(d.earlyMin)+' early'+(d.earlyInReason?' – '+esc(d.earlyInReason.reason):'')+'</div>');
+      if(d.absent)out.push('<div style="color:var(--bad);font-weight:600">Absent</div>');
+      if(d.noCheckout)out.push('<div style="color:var(--bad);font-weight:600">'+(d.missedOut&&d.missedOut.length?'Missed scan-out':'No check-out')+' – please tell your supervisor</div>');
+      if(d.leave)out.push('<div style="color:var(--info)">'+esc(leaveName(d.leave.code))+(d.leave.half?' (half day)':'')+(d.leave.reason?' – '+esc(d.leave.reason):'')+'</div>');
+      if(d.holiday)out.push('<div style="color:var(--accent)">'+esc(d.holiday)+'</div>');
+      (d.punches||[]).filter(function(p){return p.source==='Manual'&&p.reason;}).forEach(function(p){out.push('<div class="muted">✎ '+esc(p.type)+' '+esc(p.time)+' added by '+esc(p.by)+': '+esc(p.reason)+'</div>');});
+      return out.join('');
+    }
+    var rows=r.days.map(function(d){
+      var future=d.date>today, isT=d.date===today;
+      var plan=d.shift==='OFF'?'<span class="muted">Rest day</span>':(d.shift?'<b>'+esc(d.shiftName)+'</b><div class="tiny muted">'+esc(d.planned||shiftTimes(d.shift))+'</div>':'<span class="muted">–</span>');
+      return '<tr style="'+(isT?'background:#fff8f3':'')+(future?';opacity:.65':'')+'"><td style="white-space:nowrap"><b>'+esc(niceDate(d.date))+'</b>'+(isT?'<div class="tiny" style="color:var(--accent)">Today</div>':'')+'</td><td>'+plan+'</td><td class="small">'+(future?'':actual(d))+'</td><td class="small">'+(future?'':remarks(d))+'</td></tr>';
+    }).join('');
+    hb.innerHTML=confirmBoxHtml(r)+'<div class="grid g3" style="margin-top:12px">'+monthStats(r)+'</div>'+
+
+      '<div class="scroll"><table class="tbl"><tr><th>Date</th><th>Duty roster</th><th>Actual scans</th><th>Remarks</th></tr>'+rows+'</table></div>';
+    bindConfirm(r,function(){viewHistory(v);});
   }).catch(function(e){hb.innerHTML=errBox(e);});
+}
+function confirmBoxHtml(r){
+  var so=r.signoff;if(!so)return '';
+  if(!so.closed)return '<p class="small muted" style="margin-top:12px">You can confirm this month after it ends on '+esc(shortD(r.period.to))+'.</p>';
+  if(so.approved)return '<div class="okmsg">✓ Approved by the manager on '+esc(so.approved.at.substr(0,10))+'. This month is final.</div>';
+  var head='',btns='<div class="row" style="margin-top:10px"><button class="btn ok" id="cfYes">✓ Yes, confirm</button><button class="btn" id="cfNo">Something is wrong</button></div>';
+  if(so.status==='Confirmed')return '<div class="okmsg">✓ You confirmed this month on '+esc(so.at.substr(0,10))+'.'+(so.verified?' Verified by your supervisor.':' Waiting for your supervisor to verify.')+'</div>';
+  if(so.status==='Query')return '<div class="card" style="border-color:var(--warn)"><b>Your message was sent to your supervisor:</b><div class="small" style="margin:6px 0">“'+esc(so.note)+'”</div><div class="small muted">Once it is fixed, you will be asked to confirm again.</div></div>';
+  if(so.status==='Resolved')head='<b>Your supervisor replied:</b><div class="small" style="margin:6px 0">'+esc(so.note)+'</div><div>Please check the records below again. Is everything correct now?</div>';
+  else head='<b>Is your attendance below correct?</b>';
+  return '<div class="card" style="border-color:var(--accent);background:var(--accent-soft);margin-top:12px">'+head+btns+'</div>';
+}
+function bindConfirm(r,done){
+  var y=document.getElementById('cfYes'),n=document.getElementById('cfNo');
+  if(y)y.onclick=function(){confirmBox('Confirm your attendance?','You agree the attendance for '+periodText(r.period)+' is correct.',false,function(){call('apiSignoffStaff',TOKEN,r.ym,'Confirm','').then(function(){toast('Thank you – confirmed');done();}).catch(function(e){toast(e.message);});});};
+  if(n)n.onclick=function(){modal('<h3>What is wrong?</h3><p class="small muted">Your supervisor will check and fix it. Example: “I forgot to scan out on 5 Oct, I left at 6pm.”</p><textarea class="i" id="qn"></textarea><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="qs">Send to supervisor</button></div>',
+    function(m,close){m.querySelector('#qs').onclick=function(){var b=this;busy(b,true);call('apiSignoffStaff',TOKEN,r.ym,'Query',m.querySelector('#qn').value).then(function(){close();toast('Sent to your supervisor');done();}).catch(function(e){busy(b,false);toast(e.message);});};});};
+}
+
+/* ---- Month-end sign-off (supervisor / manager) ---- */
+function mSignoff(v){
+  var ym=ST.soYm||'';
+  loading(v);
+  call('apiSignoffOverview',TOKEN,ym).then(function(r){
+    ST.soYm=r.ym;
+    v.innerHTML='<div class="row" style="margin-bottom:6px"><button class="btn sm" id="sp">‹</button><b>Payroll '+esc(niceYm(r.ym))+'</b><button class="btn sm" id="sn">›</button></div>'+
+
+      (r.outlets.length?r.outlets.map(card).join(''):'<div class="loading">No outlets.</div>');
+    document.getElementById('sp').onclick=function(){ST.soYm=addMonths(r.ym,-1);mSignoff(v);};
+    document.getElementById('sn').onclick=function(){ST.soYm=addMonths(r.ym,1);mSignoff(v);};
+    bind(r);
+  }).catch(function(e){v.innerHTML=errBox(e);});
+  function tick(okv,txt,fix){return '<div class="row" style="padding:5px 0"><span style="width:20px;color:'+(okv?'var(--ok)':'var(--bad)')+';font-weight:700">'+(okv?'✓':'✗')+'</span><span class="grow small">'+txt+'</span>'+(fix&&!okv?fix:'')+'</div>';}
+  function card(o){
+    var status=o.approved?'<span class="chip ok">Approved – locked</span>':(o.verified?'<span class="chip info">Verified – waiting for manager</span>':(o.closed?'<span class="chip warn">Open</span>':'<span class="chip">Month not ended</span>'));
+    var c=o.counts, n=o.staff.length;
+    var staffRows=o.staff.map(function(x){
+      var st=x.status==='Confirmed'?'<span class="chip ok">✓ Confirmed</span>':(x.status==='Query'?'<span class="chip bad">Query</span>':(x.status==='Resolved'?'<span class="chip info">Replied – waiting to re-confirm</span>':'<span class="chip">Not yet</span>'));
+      var iss=[];if(x.issues.noCheckout)iss.push(x.issues.noCheckout+' no check-out');if(x.issues.unexplained)iss.push(x.issues.unexplained+' no reason');if(x.issues.otPending)iss.push(x.issues.otPending+'h OT pending');
+      return '<div class="daycard"><div class="row"><b class="grow">'+esc(x.name)+' <span class="muted small">'+esc(x.staffId)+'</span></b>'+st+'</div>'+
+        (iss.length?'<div class="tiny" style="color:var(--bad)">'+esc(iss.join(' · '))+'</div>':'')+
+        (x.note?'<div class="small" style="margin-top:4px">“'+esc(x.note)+'”</div>':'')+
+        (x.status==='Query'&&!o.approved?'<div class="row" style="margin-top:6px"><input class="i grow" placeholder="What did you do? e.g. Added 6pm check-out" data-rq="'+esc(o.outlet)+'|'+esc(x.staffId)+'"><button class="btn sm primary" data-rqb="'+esc(o.outlet)+'|'+esc(x.staffId)+'">Mark fixed</button></div>':'')+'</div>';}).join('');
+    var go='<button class="btn sm" data-go="rec" data-o="'+esc(o.outlet)+'" data-f="'+o.period.from+'" data-t="'+o.period.to+'">Fix ›</button>';
+    var goR='<button class="btn sm" data-go="flags" data-o="'+esc(o.outlet)+'" data-f="'+o.period.from+'" data-t="'+o.period.to+'">Give reasons ›</button>';
+    var goOT='<button class="btn sm" data-go="ot">OT approvals ›</button>';
+    return '<div class="card"><div class="row"><b class="grow" style="font-size:16px">'+esc(o.name)+'</b>'+status+'</div><div class="small muted">'+esc(periodText(o.period))+'</div>'+
+      '<h3>1 · Staff confirmations <span class="muted small">('+o.confirmed+' of '+n+')</span></h3>'+
+      '<details'+(o.openQueries?' open':'')+'><summary class="small" style="cursor:pointer">Show staff ('+n+')'+(o.openQueries?' – <b style="color:var(--bad)">'+o.openQueries+' query</b>':'')+'</summary>'+staffRows+'</details>'+
+
+      '<h3>2 · Fix before verifying</h3>'+
+      tick(!c.noCheckout,c.noCheckout?c.noCheckout+' missed check-out(s)':'No missed check-outs',go)+
+      tick(!c.unexplained,c.unexplained?c.unexplained+' early in/out without a reason':'All early in/out have reasons',goR)+
+      tick(!o.openQueries,o.openQueries?o.openQueries+' staff query(ies) open':'No open staff queries')+
+      tick(!c.otPending,c.otPending?c.otPending+' staff with OT waiting for the manager':'No OT waiting',isMgr()?goOT:'')+
+
+      '<h3>3 · Supervisor verifies</h3>'+
+      (o.verified?'<div class="small">✓ Verified by <b>'+esc(o.verified.by)+'</b> on '+esc(o.verified.at)+'</div>'+(o.canUnverify?'<button class="btn sm" style="margin-top:6px" data-act="Unverify" data-o="'+esc(o.outlet)+'">Undo verify</button>':''):
+        (o.canVerify?'<button class="btn dark" data-act="Verify" data-o="'+esc(o.outlet)+'">✓ I have checked – verify attendance</button>':'<div class="small muted">'+esc(o.blockVerify||'Not available for your role.')+'</div>'))+
+      '<h3>4 · Outlet manager approves</h3>'+
+      (o.approved?'<div class="small">✓ Approved by <b>'+esc(o.approved.by)+'</b> on '+esc(o.approved.at)+'. Records for this month are locked.</div>'+(o.canReopen?'<button class="btn sm bad" style="margin-top:6px" data-act="Reopen" data-o="'+esc(o.outlet)+'">Reopen (Admin)</button>':''):
+        (o.canApprove?'<button class="btn ok" data-act="Approve" data-o="'+esc(o.outlet)+'">✓ Approve &amp; lock this month</button>':'<div class="small muted">'+esc(r_role_msg(o))+'</div>'))+
+      '</div>';
+  }
+  function r_role_msg(o){return o.blockApprove||(isMgr()?'':'The outlet manager approves after you verify.');}
+  function bind(r){
+    v.querySelectorAll('[data-rqb]').forEach(function(b){b.onclick=function(){var k=b.dataset.rqb.split('|');var inp=v.querySelector('[data-rq="'+b.dataset.rqb+'"]');busy(b,true);
+      call('apiSignoffAction',TOKEN,r.ym,k[0],'Resolve',k[1],inp.value).then(function(){toast('Marked fixed – staff will be asked to confirm again');mSignoff(v);}).catch(function(e){busy(b,false);toast(e.message);});};});
+    v.querySelectorAll('[data-act]').forEach(function(b){b.onclick=function(){var act=b.dataset.act,o=b.dataset.o;
+      var msg={Verify:'You confirm you have checked this outlet\'s attendance for '+niceYm(r.ym)+'.',Unverify:'Remove your verification so changes can be checked again.',Approve:'Approve '+niceYm(r.ym)+' for this outlet. All its attendance records for the month will be locked.',Reopen:'Unlock this month so records can be changed. A reason is required.'}[act];
+      confirmBox({Verify:'Verify attendance?',Unverify:'Undo verify?',Approve:'Approve & lock?',Reopen:'Reopen this month?'}[act],msg,act==='Reopen',function(reason){
+        call('apiSignoffAction',TOKEN,r.ym,o,act,'',reason||'').then(function(){toast('Done');mSignoff(v);}).catch(function(e){toast(e.message);});});};});
+    v.querySelectorAll('[data-go]').forEach(function(b){b.onclick=function(){
+      if(b.dataset.go==='ot'){ST.otYm=r.ym;ST.mtab='ot';viewManage(document.getElementById('view'));return;}
+      if(b.dataset.go==='rec'){ST.attQ={from:b.dataset.f,to:b.dataset.t,outlet:b.dataset.o,staffId:'',flagsOnly:true};}
+      if(b.dataset.go==='flags'){ST.flQ={from:b.dataset.f,to:b.dataset.t,open:true};}
+      ST.attSub=b.dataset.go;viewManage(document.getElementById('view'));};});
+  }
 }
 
 /* ---- Staff: Leave ---- */
@@ -404,9 +513,9 @@ function viewMe(v){
   v.innerHTML='<div class="card" style="margin-top:16px"><h2 style="margin-top:0">'+esc(m.name)+'</h2>'+
    '<div class="small">Staff ID: <b>'+esc(m.staffId)+'</b></div><div class="small">Position: '+esc(m.position||'-')+'</div><div class="small">Outlet: '+esc(outletName(m.outlet))+'</div>'+
    '<div class="small">Access: '+esc({Admin:'Admin',OutletManager:'Outlet Manager',Accountant:'Accountant',Staff:'Staff'}[m.role])+'</div>'+
-   '<div class="small" style="margin-top:6px">This phone: '+(m.deviceOk?'<span class="chip ok">Registered to you</span>':'<span class="chip bad">Not your registered phone</span>')+'</div></div>'+
+   '<div class="small" style="margin-top:6px">This device: '+(!m.deviceRegistered?'<span class="chip">No attendance phone yet – your phone registers at your first QR scan</span>':(m.deviceOk?'<span class="chip ok">Your registered attendance phone</span>':'<span class="chip">Not your attendance phone – you can view and manage, but not scan</span>'))+'</div></div>'+
    '<div class="grid g2"><button class="btn" id="cp">Change PIN</button><button class="btn bad" id="lo">Log out</button></div>'+
-   '<p class="tiny muted" style="margin-top:20px">Your attendance location is only checked at the moment you scan the outlet QR code.</p>';
+   '';
   document.getElementById('cp').onclick=function(){renderChangePin(false);};
   document.getElementById('lo').onclick=function(){confirmBox('Log out?','You will need your Staff ID and PIN to log in again on this phone.',false,function(){logout();});};
 }
@@ -415,8 +524,7 @@ function viewMe(v){
 function viewManage(v){
   var tabs=[];
   if(isViewer())tabs.push(['today','Today']);
-  if(isViewer())tabs.push(['att','Attendance']);
-  if(isMgr()||ST.me.canRoster)tabs.push(['roster','Roster'],['flags','Early in/out']);
+  if(isViewer()||ST.me.canRoster)tabs.push(['att','Attendance']);
   if(isMgr())tabs.push(['mleave','Leave'],['ot','OT approvals']);
   if(isViewer())tabs.push(['report','Monthly report']);
   if(isMgr())tabs.push(['staff','Staff'],['outlets','Outlets']);
@@ -426,7 +534,7 @@ function viewManage(v){
   v.innerHTML='<div class="tabs">'+tabs.map(function(t){return '<button class="tab '+(ST.mtab===t[0]?'on':'')+'" data-m="'+t[0]+'">'+t[1]+'</button>';}).join('')+'</div><div id="mv"></div>';
   v.querySelectorAll('[data-m]').forEach(function(b){b.onclick=function(){ST.mtab=b.dataset.m;viewManage(v);};});
   var mv=document.getElementById('mv');
-  ({today:mToday,att:mAtt,roster:mRoster,flags:mFlags,mleave:mLeave,ot:mOT,report:mReport,staff:mStaff,outlets:mOutlets,setup:mSetup,log:mLog})[ST.mtab](mv);
+  ({today:mToday,att:mAttHub,mleave:mLeave,ot:mOT,report:mReport,staff:mStaff,outlets:mOutlets,setup:mSetup,log:mLog})[ST.mtab](mv);
 }
 
 /* ---- Today ---- */
@@ -450,11 +558,19 @@ function mToday(v){
 }
 
 /* ---- Attendance ---- */
+function mAttHub(v){
+  var subs=[['rec','Records'],['roster','Duty roster'],['flags','Late & early in/out'],['sign','Month-end sign-off']];
+  var sub=ST.attSub||'rec';
+  v.innerHTML='<div class="tabs" style="padding-top:2px">'+subs.map(function(t){return '<button class="tab '+(sub===t[0]?'on':'')+'" style="font-size:13px;padding:5px 12px" data-as="'+t[0]+'">'+t[1]+'</button>';}).join('')+'</div><div id="ahb"></div>';
+  v.querySelectorAll('[data-as]').forEach(function(b){b.onclick=function(){ST.attSub=b.dataset.as;mAttHub(v);};});
+  var hb=document.getElementById('ahb');
+  ({rec:mAtt,roster:mRoster,flags:mFlags,sign:mSignoff})[sub](hb);
+}
 function mAtt(v){
   var q=ST.attQ||(ST.attQ={from:addDays(todayStr(),-6),to:todayStr(),outlet:'',staffId:'',flagsOnly:false});
   v.innerHTML='<div class="card"><div class="grid g4"><div><label class="f">From</label><input class="i" type="date" id="af" value="'+q.from+'"></div><div><label class="f">To</label><input class="i" type="date" id="at" value="'+q.to+'"></div>'+
-    '<div><label class="f">Outlet</label><select class="i" id="ao">'+outletOpts(q.outlet,'All outlets')+'</select></div><div><label class="f">Staff ID</label><input class="i" id="as" value="'+esc(q.staffId)+'" placeholder="optional"></div></div>'+
-    '<div class="row" style="margin-top:10px"><label class="row small"><input type="checkbox" id="afl" '+(q.flagsOnly?'checked':'')+'> Only items to check (late, absent, no check-out, early in/out, long gaps, OT pending, manual)</label><div class="grow"></div>'+
+    '<div><label class="f">Outlet</label><select class="i" id="ao">'+(isViewer()?outletOpts(q.outlet,'All outlets'):opts([{v:'',l:'My outlets'}].concat((ST.boot.outlets||[]).filter(function(o){return (ST.me.rosterOutlets||[]).indexOf(o.id)>=0;}).map(function(o){return {v:o.id,l:o.name};})),q.outlet))+'</select></div><div><label class="f">Staff ID</label><input class="i" id="as" value="'+esc(q.staffId)+'" placeholder="optional"></div></div>'+
+    '<div class="row" style="margin-top:10px"><label class="row small"><input type="checkbox" id="afl" '+(q.flagsOnly?'checked':'')+'> Only items to check</label><div class="grow"></div>'+
     (isMgr()?'<button class="btn" id="aadd">+ Add missing time</button>':'')+'<button class="btn dark" id="ago">Show</button></div></div><div id="ab"></div>';
   document.getElementById('ago').onclick=function(){q.from=document.getElementById('af').value;q.to=document.getElementById('at').value;q.outlet=document.getElementById('ao').value;q.staffId=document.getElementById('as').value.trim().toUpperCase();q.flagsOnly=document.getElementById('afl').checked;load();};
   if(isMgr())document.getElementById('aadd').onclick=function(){addPunch({},load);};
@@ -497,13 +613,18 @@ function mRoster(v){
     var codes=[{v:'',l:'—'}].concat(ST.boot.shifts.map(function(s){return {v:s.code,l:s.code};}));
     var normal={};ST.boot.shifts.forEach(function(s){normal[s.code]=+s.normal||0;});
     function weekHrs(id){var t=0;r.dates.forEach(function(d){var sel=rb.querySelector('select[data-k="'+id+'|'+d+'"]');var c=sel?sel.value:r.entries[id+'|'+d];t+=normal[c]||0;});return t;}
-    rb.innerHTML='<h3>Week of '+esc(niceDate(r.dates[0]))+'</h3><div class="scroll roster"><table class="tbl"><tr><th>Staff</th>'+r.dates.map(function(d){return '<th class="'+(r.holidays[d]?'ph':'')+'">'+esc(niceDate(d))+(r.holidays[d]?'<div class="tiny" style="color:var(--accent)">'+esc(r.holidays[d])+'</div>':'')+'</th>';}).join('')+'<th class="n">Hrs</th></tr>'+
-      r.staff.map(function(s){return '<tr><td><b>'+esc(s.name)+'</b><div class="tiny muted">'+esc(s.position)+'</div></td>'+r.dates.map(function(d){var k=s.staffId+'|'+d;var lk=r.lockUpTo&&d<=r.lockUpTo;return '<td class="'+(r.holidays[d]?'ph':'')+'"><select data-k="'+esc(k)+'" '+(r.canEdit&&!lk?'':'disabled')+(lk?' title="Locked – ask your Outlet Manager to change"':'')+'>'+opts(codes,r.entries[k]||'')+'</select></td>';}).join('')+'<td class="n" data-h="'+esc(s.staffId)+'"></td></tr>';}).join('')+'</table></div>'+
+    rb.innerHTML='<h3>Week of '+esc(niceDate(r.dates[0]))+'</h3><div class="scroll roster"><table class="tbl"><tr><th>Staff</th>'+r.dates.map(function(d){return '<th class="'+(r.holidays[d]?'ph':'')+'">'+esc(niceDate(d))+(r.holidays[d]?'<div class="tiny" style="color:var(--accent)">'+esc(r.holidays[d])+'</div>':'')+'</th>';}).join('')+(isAdmin()?'<th class="n">Hrs</th>':'')+'</tr>'+
+      r.staff.map(function(s){return '<tr><td><b>'+esc(s.name)+'</b><div class="tiny muted">'+esc(s.position)+'</div></td>'+r.dates.map(function(d){var k=s.staffId+'|'+d;var lk=(r.lockUpTo&&d<=r.lockUpTo)||(r.lockedDates||[]).indexOf(d)>=0;var lv=(r.leave||{})[k];return '<td class="'+(r.holidays[d]?'ph':'')+'"><select data-k="'+esc(k)+'" '+(r.canEdit&&!lk?'':'disabled')+(lk?' title="Locked – ask your Outlet Manager to change"':'')+'>'+opts(codes,r.entries[k]||'')+'</select>'+(lv?'<div class="tiny" style="margin-top:3px"><span class="chip '+(lv.status==='Approved'?'info':'warn')+'" title="'+esc(lv.reason||'')+'">'+esc(lv.code)+(lv.half?' ½':'')+(lv.status==='Approved'?' leave':' pending')+'</span></div>':'')+'</td>';}).join('')+(isAdmin()?'<td class="n" data-h="'+esc(s.staffId)+'"></td>':'')+'</tr>';}).join('')+
+      (r.sessions||[]).map(function(se,i){return '<tr style="background:#faf9f7"><td class="small" title="Staff on duty '+fmtHM(se.start)+'–'+fmtHM(se.end)+' (staff on leave not counted)"><b>'+esc(se.name)+'</b></td>'+r.dates.map(function(d){return '<td class="center"><b data-mp="'+i+'|'+d+'"></b></td>';}).join('')+(isAdmin()?'<td></td>':'')+'</tr>';}).join('')+'</table></div>'+
+
       (r.staff.length?'':'<div class="loading">No active staff in this outlet. Add staff under "Staff".</div>')+
-      '<p class="tiny muted">'+ST.boot.shifts.map(function(s){return '<b>'+esc(s.code)+'</b> '+esc(s.name)+(s.segments?' ('+esc(String(s.segments).replace(/,/g,' & '))+')':'');}).join(' · ')+'. "Hrs" = planned normal hours (target 45/week).</p>'+
-      (r.lockUpTo&&r.canEdit?'<div class="hint" style="margin-bottom:10px">🔒 Today and earlier days are locked. Ask your Outlet Manager if a past or same-day change is needed.</div>':'')+
+      '<p class="tiny muted">'+ST.boot.shifts.filter(function(s){return s.code!=='OFF';}).map(function(s){return '<b>'+esc(s.code)+'</b> '+esc(String(s.segments).replace(/,/g,' & '));}).join(' · ')+'</p>'+
+      (r.lockUpTo&&r.canEdit?'<p class="tiny muted">🔒 Today and earlier days are locked.</p>':'')+
       (r.canEdit?'<div class="row"><button class="btn" id="rc">Copy last week</button><div class="grow"></div><button class="btn primary" id="rs">Save roster</button></div>':'');
-    function refreshHrs(){r.staff.forEach(function(s){var h=weekHrs(s.staffId);var td=rb.querySelector('[data-h="'+s.staffId+'"]');td.innerHTML='<b style="color:'+(h>45?'var(--bad)':'inherit')+'">'+hrs(h)+'</b>';});}
+    var segOf={};ST.boot.shifts.forEach(function(s){segOf[s.code]=String(s.segments||'').split(',').map(function(x){var m=x.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);return m?[+m[1]*60+ +m[2],+m[3]*60+ +m[4]]:null;}).filter(Boolean);});
+    function onDuty(code,se){return (segOf[code]||[]).some(function(g){return Math.min(g[1],se.end)-Math.max(g[0],se.start)>=60;});}
+    function refreshMP(){(r.sessions||[]).forEach(function(se,i){r.dates.forEach(function(d){var n=0;r.staff.forEach(function(s){var k=s.staffId+'|'+d;var sel=rb.querySelector('select[data-k="'+k+'"]');var c=sel?sel.value:r.entries[k];var lv=(r.leave||{})[k];if(lv&&!lv.half)return;if(c&&onDuty(c,se))n++;});var el=rb.querySelector('[data-mp="'+i+'|'+d+'"]');if(el){el.textContent=n;el.style.color=n<=1?'var(--bad)':'inherit';}});});}
+    function refreshHrs(){r.staff.forEach(function(s){var h=weekHrs(s.staffId);var td=rb.querySelector('[data-h="'+s.staffId+'"]');if(td)td.innerHTML='<b style="color:'+(h>45?'var(--bad)':'inherit')+'">'+hrs(h)+'</b>';});refreshMP();}
     rb.querySelectorAll('select').forEach(function(s){s.onchange=refreshHrs;});refreshHrs();
     if(!r.canEdit)return;
     document.getElementById('rc').onclick=function(){var b=this;busy(b,true);call('apiRosterGet',TOKEN,outlet,addDays(r.dates[0],-7)).then(function(p){busy(b,false);
@@ -517,21 +638,21 @@ function mRoster(v){
 /* ---- Early in / out reasons ---- */
 function mFlags(v){
   var q=ST.flQ||(ST.flQ={from:addDays(todayStr(),-13),to:todayStr(),open:true});
-  v.innerHTML='<div class="card"><p class="small" style="margin-top:0">Staff who came in more than the allowed time <b>before</b> their shift, or left <b>before</b> the shift ended (or the outlet closed), need a reason from the supervisor. The time worked is still counted; the reason shows in the monthly report.</p>'+
-    '<div class="row"><input class="i" type="date" id="ff" value="'+q.from+'" style="max-width:170px"><input class="i" type="date" id="ft" value="'+q.to+'" style="max-width:170px"><label class="row small"><input type="checkbox" id="fo" '+(q.open?'checked':'')+'> Only those still needing a reason</label><div class="grow"></div><button class="btn dark" id="fgo">Show</button></div></div><div id="fb"></div>';
+  v.innerHTML='<div class="card"><p class="small muted" style="margin-top:0">Early in/out needs a reason. Late is optional.</p>'+
+    '<div class="row"><input class="i" type="date" id="ff" value="'+q.from+'" style="max-width:170px"><input class="i" type="date" id="ft" value="'+q.to+'" style="max-width:170px"><label class="row small"><input type="checkbox" id="fo" '+(q.open?'checked':'')+'> Only those without a reason yet</label><div class="grow"></div><button class="btn dark" id="fgo">Show</button></div></div><div id="fb"></div>';
   document.getElementById('fgo').onclick=function(){q.from=document.getElementById('ff').value;q.to=document.getElementById('ft').value;q.open=document.getElementById('fo').checked;load();};
   var fb=document.getElementById('fb');
   function item(x,flag,mins,rs){
-    var label=flag==='EarlyIn'?'Came in '+fmtGap(mins)+' early':'Left '+fmtGap(mins)+' early';
+    var label=flag==='EarlyIn'?'Came in '+fmtGap(mins)+' early':(flag==='Late'?'<span style="color:var(--bad)">Late '+fmtGap(mins)+'</span> <span class="tiny muted">(reason optional)</span>':'<span style="color:var(--bad)">Left '+fmtGap(mins)+' early</span>');
     return '<div style="margin-top:8px"><b>'+label+'</b>'+(rs?' <span class="chip ok">Reason given</span><div class="small">'+esc(rs.reason)+' <span class="muted">– '+esc(rs.by)+'</span></div>':'')+
-      ((!rs||isMgr())&&!(x.isSelf&&!isMgr())?'<div class="row" style="margin-top:6px"><input class="i grow" placeholder="Reason, e.g. stock receiving at 9.30 / sent home, unwell / mall closed early" data-r="'+esc(x.staffId)+'|'+x.day.date+'|'+flag+'" value="'+esc(rs?rs.reason:'')+'"><button class="btn sm primary" data-rs="'+esc(x.staffId)+'|'+x.day.date+'|'+flag+'">'+(rs?'Update':'Save')+'</button></div>':
+      ((!rs||isMgr())&&!(x.isSelf&&!isMgr())?'<div class="row" style="margin-top:6px"><input class="i grow" placeholder="Reason, e.g. stock receiving at 9.30 / traffic jam / sent home, unwell" data-r="'+esc(x.staffId)+'|'+x.day.date+'|'+flag+'" value="'+esc(rs?rs.reason:'')+'"><button class="btn sm primary" data-rs="'+esc(x.staffId)+'|'+x.day.date+'|'+flag+'">'+(rs?'Update':'Save')+'</button></div>':
        (x.isSelf&&!rs?'<div class="tiny muted">Your own record – your Outlet Manager must give the reason.</div>':''))+'</div>';
   }
   function load(){loading(fb);call('apiFlagsGet',TOKEN,q.from,q.to,q.open).then(function(r){
     fb.innerHTML=r.rows.length?r.rows.map(function(x){var d=x.day;
       return '<div class="card"><div class="row"><b class="grow">'+esc(x.name)+' <span class="muted small">'+esc(x.staffId)+' · '+esc(outletName(x.outlet))+'</span></b><span class="small">'+esc(niceDate(d.date))+'</span></div>'+
         '<div class="small muted">'+esc(d.shiftName||'')+' '+esc(shiftTimes(d.shift))+'</div><div style="margin-top:4px">'+punchesHtml(d.punches)+'</div>'+
-        (d.earlyMin?item(x,'EarlyIn',d.earlyMin,d.earlyInReason):'')+(d.earlyOutMin?item(x,'EarlyOut',d.earlyOutMin,d.earlyOutReason):'')+'</div>';}).join(''):'<div class="loading">Nothing to explain for these dates.</div>';
+        (d.late?item(x,'Late',d.lateMin,d.lateReason):'')+(d.earlyMin?item(x,'EarlyIn',d.earlyMin,d.earlyInReason):'')+(d.earlyOutMin?item(x,'EarlyOut',d.earlyOutMin,d.earlyOutReason):'')+'</div>';}).join(''):'<div class="loading">Nothing to explain for these dates.</div>';
     fb.querySelectorAll('[data-rs]').forEach(function(b){b.onclick=function(){var k=b.dataset.rs.split('|');var inp=fb.querySelector('[data-r="'+b.dataset.rs+'"]');busy(b,true);
       call('apiFlagExplain',TOKEN,k[0],k[1],k[2],inp.value).then(function(){toast('Reason saved');load();}).catch(function(e){busy(b,false);toast(e.message);});};});
   }).catch(function(e){fb.innerHTML=errBox(e);});}
@@ -550,10 +671,12 @@ function mLeave(v){
     lb.innerHTML=r.requests.length?r.requests.map(function(q){var c={Approved:'ok',Rejected:'bad',Pending:'warn',Cancelled:''}[q.status];
       return '<div class="card"><div class="row"><b class="grow">'+esc(q.name)+' <span class="muted small">'+esc(q.staffId)+' · '+esc(outletName(q.outlet))+'</span></b><span class="chip '+c+'">'+esc(q.status)+'</span></div>'+
         '<div><b>'+esc(leaveName(q.code))+'</b> · '+esc(hrs(q.days))+' day(s) · '+esc(niceDate(q.from))+(q.to!==q.from?' – '+esc(niceDate(q.to)):'')+(q.half?' (half day)':'')+'</div>'+
-        '<div class="small">Reason: '+esc(q.reason)+'</div>'+(q.balanceAfter!==null&&q.status==='Pending'?'<div class="tiny muted">Balance if approved: '+hrs(q.balanceAfter)+' (already counts this request)</div>':'')+
+        '<div class="small">Reason: '+esc(q.reason)+'</div>'+
+        '<div style="margin-top:6px"><button class="btn sm" data-wk="'+esc(q.outlet)+'|'+esc(q.from)+'">See duty roster for that week ›</button></div>'+(q.balanceAfter!==null&&q.status==='Pending'?'<div class="tiny muted">Balance if approved: '+hrs(q.balanceAfter)+' (already counts this request)</div>':'')+
         (q.note?'<div class="small muted">Note: '+esc(q.note)+'</div>':'')+(q.decidedBy?'<div class="tiny muted">By '+esc(q.decidedBy)+'</div>':'')+
         (q.status==='Pending'?'<div class="row" style="margin-top:8px"><button class="btn sm ok" data-d="Approved" data-id="'+esc(q.id)+'">Approve</button><button class="btn sm bad" data-d="Rejected" data-id="'+esc(q.id)+'">Reject</button></div>':
          (q.status==='Approved'?'<div class="row" style="margin-top:8px"><button class="btn sm" data-d="Cancelled" data-id="'+esc(q.id)+'">Cancel approved leave</button></div>':''))+'</div>';}).join(''):'<div class="loading">No '+(sub==='pending'?'pending ':'')+'requests.</div>';
+    lb.querySelectorAll('[data-wk]').forEach(function(b){b.onclick=function(){var k=b.dataset.wk.split('|');ST.rOutlet=k[0];ST.rWeek=k[1];ST.attSub='roster';ST.mtab='att';viewManage(document.getElementById('view'));};});
     lb.querySelectorAll('[data-d]').forEach(function(b){b.onclick=function(){var d=b.dataset.d;
       modal('<h3>'+esc(d==='Approved'?'Approve':d==='Rejected'?'Reject':'Cancel')+' leave</h3><label class="f">Note to staff (optional)</label><textarea class="i" id="ln"></textarea><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-close>Back</button><button class="btn primary" id="lgo">Confirm</button></div>',
         function(m,close){m.querySelector('#lgo').onclick=function(){var btn=this;busy(btn,true);call('apiLeaveDecide',TOKEN,b.dataset.id,d,m.querySelector('#ln').value).then(function(){close();toast('Done');mLeave(v);}).catch(function(e){busy(btn,false);toast(e.message);});};});};});
@@ -592,12 +715,13 @@ function leaveRepl(lb){
 
 /* ---- OT approvals ---- */
 function mOT(v){
-  var ym=ST.otYm||ymNow();
-  v.innerHTML='<div class="row"><button class="btn sm" id="op">‹</button><b>'+esc(niceYm(ym))+'</b><button class="btn sm" id="on">›</button></div><p class="small muted">OT shown here needs a decision: all OT for positions that need approval (e.g. Sales Promoter), and OT above the weekly cap for others. OT within the cap is approved automatically.</p><div id="ob"></div>';
+  var ym=ST.otYm||ymCompany();
+  v.innerHTML='<div class="row"><button class="btn sm" id="op">‹</button><b>Payroll '+esc(niceYm(ym))+'</b><button class="btn sm" id="on">›</button><span class="small muted" id="oper"></span></div><div id="ob"></div>';
   document.getElementById('op').onclick=function(){ST.otYm=addMonths(ym,-1);mOT(v);};
   document.getElementById('on').onclick=function(){ST.otYm=addMonths(ym,1);mOT(v);};
   var ob=document.getElementById('ob');loading(ob);
   call('apiOTQueue',TOKEN,ym).then(function(r){
+    var op=document.getElementById('oper');if(op)op.textContent=periodText(r.period)+' (default cut-off)';
     ob.innerHTML=r.items.length?'<div class="scroll"><table class="tbl"><tr><th>Date</th><th>Staff</th><th>Day</th><th class="n">Worked</th><th class="n">Auto OT</th><th class="n">Needs decision</th><th>Decision</th></tr>'+
       r.items.map(function(x){return '<tr><td>'+esc(niceDate(x.date))+'</td><td><b>'+esc(x.name)+'</b><div class="tiny muted">'+esc(x.position)+' · '+esc(outletName(x.outlet))+'</div></td><td>'+esc({NORMAL:'Normal',REST:'Rest day',PH:'Public holiday'}[x.dayType])+'</td><td class="n">'+hrs(x.workedHrs)+'</td><td class="n">'+hrs(x.autoHrs)+'</td><td class="n"><b>'+hrs(x.needsHrs)+'h</b></td><td>'+
         (x.pending?'<div class="row"><input class="i" style="width:70px;min-height:32px;padding:4px 8px" value="'+x.needsHrs+'" data-hh="'+esc(x.staffId)+'|'+x.date+'"><button class="btn sm ok" data-ot="Pay" data-k="'+esc(x.staffId)+'|'+x.date+'">Pay</button><button class="btn sm" data-ot="TimeOff" data-k="'+esc(x.staffId)+'|'+x.date+'">Time off</button><button class="btn sm bad" data-ot="Reject" data-k="'+esc(x.staffId)+'|'+x.date+'">Reject</button></div>':
@@ -609,8 +733,9 @@ function mOT(v){
 
 /* ---- Report ---- */
 function mReport(v){
-  var ym=ST.repYm||addMonths(ymNow(),todayStr().substr(8)<'08'?-1:0), outlet=ST.repOutlet||'';
-  v.innerHTML='<div class="row"><button class="btn sm" id="rp">‹</button><b>'+esc(niceYm(ym))+'</b><button class="btn sm" id="rn">›</button><select class="i" id="ro" style="max-width:240px">'+outletOpts(outlet,'All outlets')+'</select><div class="grow"></div>'+
+  var cut=(ST.boot&&ST.boot.cutoffDefault)||23, dd=+todayStr().substr(8,2);
+  var ym=ST.repYm||(dd>cut&&dd-cut<=10?addMonths(ymCompany(),-1):ymCompany()), outlet=ST.repOutlet||'';
+  v.innerHTML='<div class="row"><button class="btn sm" id="rp">‹</button><b>Payroll '+esc(niceYm(ym))+'</b><button class="btn sm" id="rn">›</button><select class="i" id="ro" style="max-width:240px">'+outletOpts(outlet,'All outlets')+'</select><div class="grow"></div>'+
     '<button class="btn" id="rcsv">Download (Excel CSV)</button><button class="btn dark" id="rsh">Create Google Sheet tab</button></div><div id="rlink"></div><div id="rb"></div>';
   document.getElementById('rp').onclick=function(){ST.repYm=addMonths(ym,-1);mReport(v);};
   document.getElementById('rn').onclick=function(){ST.repYm=addMonths(ym,1);mReport(v);};
@@ -621,9 +746,11 @@ function mReport(v){
   var rb=document.getElementById('rb');loading(rb);
   call('apiReport',TOKEN,ym,outlet).then(function(r){
     var lt=r.leaveTypes,st=r.settings;
-    rb.innerHTML='<p class="small muted">Hours in decimal (7.5 = 7h 30m). Required = '+esc(st.WeeklyHours)+'h/week × days in month. Credited = normal hours worked + paid leave + public holidays off. OT ×'+esc(st.OTRateNormal)+', public holiday work ×'+esc(st.PHRate)+', public holiday OT ×'+esc(st.PHOTRate)+'. Work on rest days is counted as normal hours + OT.</p>'+
-      (r.rows.length?'<div class="scroll" style="max-height:70vh"><table class="tbl"><tr><th>Staff</th><th class="n">Required</th><th class="n">Credited</th><th class="n">Short</th><th class="n">Worked</th><th class="n">OT</th><th class="n">PH hrs</th><th class="n">PH OT</th><th class="n">OT pending</th><th class="n">Late</th><th class="n">Absent</th><th class="n">No c/o</th><th class="n">Travel</th><th class="n">Long gaps</th><th class="n">Manual</th><th class="n">Early in</th><th class="n">Early out</th><th class="n">No reason</th>'+lt.map(function(t){return '<th class="n">'+esc(t.code)+'</th>';}).join('')+'<th>Leave details</th></tr>'+
-        r.rows.map(function(x){return '<tr><td class="who"><b>'+esc(x.name)+'</b><div class="tiny muted">'+esc(x.staffId)+' · '+esc(x.position)+' · '+esc(outletName(x.outlet))+'</div></td><td class="n">'+hrs(x.requiredHrs)+'</td><td class="n">'+hrs(x.creditHrs)+'</td><td class="n">'+(x.remainingHrs?'<b style="color:var(--bad)">'+hrs(x.remainingHrs)+'</b>':'0')+'</td><td class="n">'+hrs(x.workedHrs)+'</td><td class="n">'+hrs(x.otNormalHrs)+'</td><td class="n">'+hrs(x.phHrs)+'</td><td class="n">'+hrs(x.otPHHrs)+'</td><td class="n">'+(x.otPendingHrs?'<span class="chip acc">'+hrs(x.otPendingHrs)+'</span>':'0')+'</td>'+
+    var showReq=ST.me.role==='Admin'||ST.me.role==='Accountant';
+    var sgn=(r.signoff||[]).map(function(x){return '<span class="chip '+(x.status==='Approved'?'ok':(x.status==='Verified'?'info':'warn'))+'" title="'+esc(x.by?x.status+' by '+x.by+' '+x.at:'')+'">'+esc(outletName(x.outlet))+': '+esc(x.status==='Open'?'Not signed off':x.status)+'</span>';}).join(' ');
+    rb.innerHTML=(sgn?'<div style="margin:10px 0"><span class="small muted">Sign-off: </span>'+sgn+'</div>':'')+'<div class="hint" style="margin:10px 0">Attendance period: <b>'+r.periods.map(function(p){return esc(periodText(p));}).join('</b> / <b>')+'</b>'+(r.periods.length>1?' (outlets have different cut-off days)':'')+'</div>'+(showReq?'<p class="tiny muted">Hours in decimal (7.5 = 7h 30m). OT ×'+esc(st.OTRateNormal)+' · PH ×'+esc(st.PHRate)+' · PH OT ×'+esc(st.PHOTRate)+'.</p>':'')+
+      (r.rows.length?'<div class="scroll" style="max-height:70vh"><table class="tbl"><tr><th>Staff</th>'+(showReq?'<th class="n">Required</th><th class="n">Credited</th><th class="n">Short</th>':'')+'<th class="n">Worked</th><th class="n">OT</th><th class="n">PH hrs</th><th class="n">PH OT</th><th class="n">OT pending</th><th class="n">Late</th><th class="n">Absent</th><th class="n">No c/o</th><th class="n">Travel</th><th class="n">Long gaps</th><th class="n">Manual</th><th class="n">Early in</th><th class="n">Early out</th><th class="n">No reason</th>'+lt.map(function(t){return '<th class="n">'+esc(t.code)+'</th>';}).join('')+'<th>Leave details</th></tr>'+
+        r.rows.map(function(x){return '<tr><td class="who"><b>'+esc(x.name)+'</b><div class="tiny muted">'+esc(x.staffId)+' · '+esc(x.position)+' · '+esc(outletName(x.outlet))+'</div></td>'+(showReq?'<td class="n">'+hrs(x.requiredHrs)+'</td><td class="n">'+hrs(x.creditHrs)+'</td><td class="n">'+(x.remainingHrs?'<b style="color:var(--bad)">'+hrs(x.remainingHrs)+'</b>':'0')+'</td>':'')+'<td class="n">'+hrs(x.workedHrs)+'</td><td class="n">'+hrs(x.otNormalHrs)+'</td><td class="n">'+hrs(x.phHrs)+'</td><td class="n">'+hrs(x.otPHHrs)+'</td><td class="n">'+(x.otPendingHrs?'<span class="chip acc">'+hrs(x.otPendingHrs)+'</span>':'0')+'</td>'+
           '<td class="n" title="'+esc(x.lateDates)+'">'+x.lateCount+(x.lateCount?'<div class="tiny muted">'+x.lateMin+'m</div>':'')+'</td><td class="n" title="'+esc(x.absentDates)+'">'+x.absent+'</td><td class="n">'+(x.noCheckout?'<span class="chip bad">'+x.noCheckout+'</span>':'0')+'</td><td class="n">'+hrs(x.travelHrs)+'</td><td class="n">'+(x.longGaps?'<span class="chip warn">'+x.longGaps+'</span>':'0')+'</td><td class="n">'+(x.manualEntries||0)+'</td><td class="n">'+(x.earlyIn||0)+'</td><td class="n">'+(x.earlyOut||0)+'</td><td class="n">'+(x.unexplained?'<span class="chip warn">'+x.unexplained+'</span>':'0')+'</td>'+
           lt.map(function(t){return '<td class="n">'+(x.leaveDays[t.code]||'')+'</td>';}).join('')+'<td class="small" style="min-width:220px">'+esc(x.leaveDetail)+'</td></tr>';}).join('')+'</table></div>':'<div class="loading">No staff in this report.</div>')+
       (r.rows.some(function(x){return x.noCheckout||x.otPendingHrs;})?'<div class="err">Some staff still have unresolved "no check-out" days or OT waiting for approval. Fix these before sending to the accountant.</div>':'');
@@ -656,7 +783,7 @@ function mStaff(v){
         '<label class="f">Full name</label><input class="i" id="e_nm" value="'+esc(s.name||'')+'">'+
         '<div class="grid g2"><div><label class="f">Job position</label><select class="i" id="e_ps">'+opts(pos,s.position)+'</select></div><div><label class="f">Branch / outlet</label><select class="i" id="e_ou">'+opts(ST.boot.outlets.map(function(o){return {v:o.id,l:o.name};}),s.outlet)+'</select></div></div>'+
         '<label class="f">Access in this app</label><select class="i" id="e_rl">'+opts(ROLES,s.role)+'</select>'+
-        '<label class="row small" style="margin-top:10px"><input type="checkbox" id="e_mu" '+(s.multi?'checked':'')+'> Multi-outlet (moves between outlets; travel between outlets is counted up to the allowance)</label>'+
+        '<label class="row small" style="margin-top:10px"><input type="checkbox" id="e_mu" '+(s.multi?'checked':'')+'> Multi-outlet (works across outlets)</label>'+
         '<div id="e_mgw"><label class="f">Outlets this person looks after / arranges roster for <span class="muted">(none ticked = home outlet only)</span></label><div class="grid g2" id="e_mg">'+ST.boot.outlets.map(function(o){var on=(s.managed||'').split(',').indexOf(o.id)>=0;return '<label class="row small"><input type="checkbox" value="'+esc(o.id)+'" '+(on?'checked':'')+'> '+esc(o.name)+'</label>';}).join('')+'</div></div>'+
         '<label class="f">Phone number (optional)</label><input class="i" id="e_ph" value="'+esc(s.phone||'')+'">'+
         '<label class="f">Notes</label><input class="i" id="e_no" value="'+esc(s.notes||'')+'">'+
@@ -676,18 +803,21 @@ function mOutlets(v){
   loading(v);
   call('apiOutlets',TOKEN).then(function(r){
     r.outlets.forEach(function(o){o.kioskUrl=o.kioskKey?BOOT.baseUrl+'?page=kiosk&o='+encodeURIComponent(o.id)+'&k='+encodeURIComponent(o.kioskKey):'';});
-    v.innerHTML='<div class="hint" style="margin-top:6px"><b>Setting up an outlet screen:</b> open the outlet\'s screen link on the tablet at the outlet entrance (Chrome or Safari, full screen, screen-sleep off). <b>Setting the location:</b> stand inside the outlet with your phone, open Edit, and tap "Use my current location".</div>'+
+    v.innerHTML=''+
       (r.canEdit?'<div class="row" style="margin:12px 0"><div class="grow"></div><button class="btn primary" id="oadd">+ Add outlet</button></div>':'')+
       r.outlets.map(function(o){return '<div class="card"><div class="row"><b class="grow">'+esc(o.name)+' <span class="muted small">'+esc(o.id)+'</span></b>'+(o.active?'':'<span class="chip">Inactive</span>')+(o.lat?'<span class="chip ok">Location set</span>':'<span class="chip bad">Location not set</span>')+'</div>'+
-        '<div class="small muted">'+(o.lat?esc(o.lat)+', '+esc(o.lng)+' · radius '+esc(o.radius||r.defaultRadius)+' m':'Staff cannot check in here until the location is set.')+(o.closeTime?' · closes '+esc(o.closeTime):'')+'</div>'+
+        '<div class="small muted">'+(o.lat?esc(o.lat)+', '+esc(o.lng)+' · radius '+esc(o.radius||r.defaultRadius)+' m':'Staff cannot check in here until the location is set.')+' · hours '+esc(o.openTime||'10:00')+'–'+esc(o.closeTime||'22:00')+' · cut-off day '+esc(o.cutoffDay||((ST.boot&&ST.boot.cutoffDefault)||23))+'</div>'+
         '<div class="row" style="margin-top:10px">'+(o.kioskUrl?'<a class="btn sm" href="'+esc(o.kioskUrl)+'" target="_blank">Open outlet screen</a><button class="btn sm" data-copy="'+esc(o.kioskUrl)+'">Copy screen link</button>':'')+(r.canEdit?'<button class="btn sm" data-oe="'+esc(o.id)+'">Edit</button>':'')+'</div></div>';}).join('');
     v.querySelectorAll('[data-copy]').forEach(function(b){b.onclick=function(){var t=b.dataset.copy;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){toast('Link copied');}).catch(function(){modal('<h3>Outlet screen link</h3><textarea class="i" style="min-height:120px">'+esc(t)+'</textarea><button class="btn block" data-close style="margin-top:10px">Close</button>');});};});
     v.querySelectorAll('[data-oe]').forEach(function(b){b.onclick=function(){edit(r.outlets.filter(function(o){return o.id===b.dataset.oe;})[0]);};});
     if(r.canEdit)document.getElementById('oadd').onclick=function(){edit(null);};
     function edit(o){var isNew=!o;o=o||{active:true};
-      modal('<h3>'+(isNew?'Add outlet':'Edit '+esc(o.name))+'</h3><div class="grid g2"><div><label class="f">Code</label><input class="i" id="o_id" value="'+esc(o.id||'')+'" '+(isNew?'':'disabled')+'></div><div><label class="f">Radius (m)</label><input class="i" id="o_r" inputmode="numeric" value="'+esc(o.radius||'')+'" placeholder="'+esc(r.defaultRadius)+'"></div></div>'+
+      modal('<h3>'+(isNew?'Add outlet':'Edit '+esc(o.name))+'</h3><div class="grid g2"><div><label class="f">Code</label><input class="i" id="o_id" value="'+esc(o.id||'')+'" autocapitalize="characters"></div><div><label class="f">Radius (m)</label><input class="i" id="o_r" inputmode="numeric" value="'+esc(o.radius||'')+'" placeholder="'+esc(r.defaultRadius)+'"></div></div>'+
         '<label class="f">Name</label><input class="i" id="o_nm" value="'+esc(o.name||'')+'">'+
-        '<label class="f">Outlet closing time <span class="muted">(e.g. 21:30 – used for the "Early out" check; leave blank if 22:00)</span></label><input class="i" id="o_ct" value="'+esc(o.closeTime||'')+'" placeholder="21:30">'+
+        '<label class="f">Business hours <span class="muted">(blank = 10:00 to 22:00)</span></label><div class="grid g2"><input class="i" id="o_op" value="'+esc(o.openTime||'')+'" placeholder="Opens 10:00"><input class="i" id="o_ct" value="'+esc(o.closeTime||'')+'" placeholder="Closes 22:00"></div>'+
+        '<p class="tiny muted" style="margin:4px 0 0">Late is counted from the later of shift start and opening time; early out from the earlier of shift end and closing time.</p>'+
+        '<label class="f">Payroll cut-off day <span class="muted">(blank = company default, day '+esc((ST.boot&&ST.boot.cutoffDefault)||23)+')</span></label><input class="i" id="o_cd" inputmode="numeric" value="'+esc(o.cutoffDay||'')+'" placeholder="'+esc((ST.boot&&ST.boot.cutoffDefault)||23)+'">'+
+        (isNew?'':'<p class="tiny muted" style="margin:4px 0 0">Changing the <b>code</b> updates all staff, rosters and records, and gives the outlet screen a new link – reopen the outlet screen afterwards.</p>')+
         '<div class="grid g2"><div><label class="f">Latitude</label><input class="i" id="o_lat" value="'+esc(o.lat||'')+'"></div><div><label class="f">Longitude</label><input class="i" id="o_lng" value="'+esc(o.lng||'')+'"></div></div>'+
         '<button class="btn block" id="o_geo" style="margin-top:10px">📍 Use my current location</button><div id="o_gm" class="small muted"></div>'+
         '<label class="row small" style="margin-top:10px"><input type="checkbox" id="o_ac" '+(o.active?'checked':'')+'> Active</label>'+
@@ -698,14 +828,16 @@ function mOutlets(v){
             navigator.geolocation.getCurrentPosition(function(p){m.querySelector('#o_lat').value=p.coords.latitude.toFixed(6);m.querySelector('#o_lng').value=p.coords.longitude.toFixed(6);gm.textContent='Accuracy about '+Math.round(p.coords.accuracy)+' m. If it is more than 50 m, step near the shop front and try again.';},
               function(e){gm.textContent='Could not get location: '+e.message;},{enableHighAccuracy:true,timeout:20000,maximumAge:0});};
           m.querySelector('#o_sv').onclick=function(){var btn=this;busy(btn,true);var nk=m.querySelector('#o_nk');
-            call('apiOutletSave',TOKEN,{id:m.querySelector('#o_id').value,name:m.querySelector('#o_nm').value,lat:m.querySelector('#o_lat').value.trim(),lng:m.querySelector('#o_lng').value.trim(),radius:m.querySelector('#o_r').value.trim(),closeTime:m.querySelector('#o_ct').value.trim(),active:m.querySelector('#o_ac').checked,newKey:nk&&nk.checked},isNew)
+            var newId=m.querySelector('#o_id').value.trim().toUpperCase();
+            var first=(!isNew&&newId!==o.id)?call('apiOutletRename',TOKEN,o.id,newId):Promise.resolve();
+            first.then(function(){return call('apiOutletSave',TOKEN,{id:newId,name:m.querySelector('#o_nm').value,lat:m.querySelector('#o_lat').value.trim(),lng:m.querySelector('#o_lng').value.trim(),radius:m.querySelector('#o_r').value.trim(),openTime:m.querySelector('#o_op').value.trim(),cutoffDay:m.querySelector('#o_cd').value.trim(),closeTime:m.querySelector('#o_ct').value.trim(),active:m.querySelector('#o_ac').checked,newKey:nk&&nk.checked},isNew);})
             .then(function(){close();toast('Saved');call('apiBoot',TOKEN).then(function(b){ST.boot=b;});mOutlets(v);}).catch(function(e){busy(btn,false);toast(e.message);});};});}
   }).catch(function(e){v.innerHTML=errBox(e);});
 }
 
 /* ---- Setup tables ---- */
 var TABLE_HELP={
-  Settings:'General rules. Change the Value column only.',
+  Settings:'General rules. Change the Value column only. CutoffDay = payroll cut-off (23 means the July payroll covers 24 June to 23 July); each outlet can override it under Outlets.',
   Positions:'OTCapWeeklyHrs: weekly OT allowed automatically (blank = no cap, 0 = none). OTNeedsApproval: Y = every OT hour needs a manager decision. CanArrangeRoster: Y = staff in this position can arrange the duty roster for their outlet(s), for tomorrow onwards only.',
   Shifts:'Segments: working hours, e.g. 10:00-18:00 or 10:00-14:00,18:00-22:00. NormalHours: hours before OT starts. OTAllowed: N = no OT on this shift. Keep the OFF code for rest days.',
   LeaveTypes:'Paid: Y = uses entitlement balance and counts as worked hours. N = unpaid (no balance needed).',
